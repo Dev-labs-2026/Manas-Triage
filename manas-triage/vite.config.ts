@@ -10,7 +10,8 @@ export default defineConfig({
     VitePWA({
       registerType: 'autoUpdate',
       workbox: {
-        maximumFileSizeToCacheInBytes: 35 * 1024 * 1024, // allows files up to 35 MB to be cached
+        maximumFileSizeToCacheInBytes: 50 * 1024 * 1024,
+        globIgnores: ['**/*.wasm'],
       },
       manifest: {
         name: 'MANAS-TRIAGE Offline System',
