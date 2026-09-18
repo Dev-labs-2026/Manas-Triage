@@ -9,6 +9,9 @@ export default defineConfig({
     tailwindcss(),
     VitePWA({
       registerType: 'autoUpdate',
+      workbox: {
+        maximumFileSizeToCacheInBytes: 35 * 1024 * 1024, // allows files up to 35 MB to be cached
+      },
       manifest: {
         name: 'MANAS-TRIAGE Offline System',
         short_name: 'MANAS-Triage',

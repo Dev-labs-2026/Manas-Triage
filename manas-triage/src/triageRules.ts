@@ -50,14 +50,14 @@ export function evaluatePhysicalTriage(vitals: VitalsInput): {
   const finalScore = Math.min(score, 100);
 
   // Category strictly mapped to the 0-100 score brackets
-  let category: TriageCategory = 'GREEN';
-  if (finalScore >= 70) {
-    category = 'RED';
-  } else if (finalScore >= 35) {
-    category = 'YELLOW';
-  } else {
-    category = 'GREEN';
-  }
+  let category: TriageCategory;
+if (finalScore >= 70) {
+  category = 'RED';
+} else if (finalScore >= 35) {
+  category = 'YELLOW';
+} else {
+  category = 'GREEN';
+}
 
   return {
     category,
