@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import type { FormEvent } from 'react';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import { db } from './db';
 import type { VitalsInput, TriageCategory, TriageRecord } from './types';
 import { evaluatePhysicalTriage, detectMentalRedFlags } from './triageRules';
@@ -12,6 +14,8 @@ import {
   Cpu,
   RotateCcw,
   Sparkles,
+  FileDown,
+  X,
 } from 'lucide-react';
 
 const TOUR_STEPS: TourStep[] = [
@@ -52,6 +56,11 @@ export default function App() {
   const [aiStatus, setAiStatus] = useState<string>('Ready (Local)');
   const [aiReady, setAiReady] = useState<boolean>(false);
   const [recentRecords, setRecentRecords] = useState<TriageRecord[]>([]);
+
+  // Export Modal States
+  const [isExportOpen, setIsExportOpen] = useState(false);
+  const [patientName, setPatientName] = useState('');
+  const [guardianPhone, setGuardianPhone] = useState('');
 
   const [tourIndex, setTourIndex] = useState<number>(() => {
     return localStorage.getItem('manas_tour_completed') ? 999 : 0;
@@ -94,7 +103,7 @@ export default function App() {
 
         const lower = mentalText.toLowerCase();
         const highCrisisWords = [
-          'can\'t breathe',
+          "can't breathe",
           'cant breathe',
           'panic',
           'terrified',
@@ -154,10 +163,10 @@ export default function App() {
     };
   }, [mentalText]);
 
-  const loadRecords = async () => {
-    const list = await db.triageRecords.reverse().limit(5).toArray();
-    setRecentRecords(list);
-  };
+  async function loadRecords() {
+  const list = await db.triageRecords.reverse().limit(10).toArray();
+  setRecentRecords(list);
+}
 
   const handleExitAndWipeData = async () => {
     const confirmWipe = window.confirm(
@@ -227,6 +236,84 @@ export default function App() {
 
     setAnalyzing(true);
     workerRef.current?.postMessage({ type: 'CLASSIFY', text: mentalText });
+  };
+
+  // PDF Export Logic
+  const handleExportPDF = (skipDetails: boolean = false) => {
+    const doc = new jsPDF();
+    const formattedDate = new Date().toLocaleDateString();
+    const formattedTime = new Date().toLocaleTimeString();
+
+    const name = skipDetails || !patientName.trim() ? 'Unidentified / Anonymous (Emergency)' : patientName.trim();
+    const phone = skipDetails || !guardianPhone.trim() ? 'N/A (Skipped for Emergency)' : guardianPhone.trim();
+
+    // Top Brand Bar
+    doc.setFillColor(15, 23, 42); // slate-900
+    doc.rect(0, 0, 210, 28, 'F');
+
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(16);
+    doc.setFont('helvetica', 'bold');
+    doc.text('MANAS TRIAGE - FIELD INCIDENT REPORT', 14, 18);
+
+    // Patient & Generation Metadata
+    doc.setTextColor(30, 41, 59);
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'bold');
+    doc.text('Patient Name:', 14, 38);
+    doc.setFont('helvetica', 'normal');
+    doc.text(name, 50, 38);
+
+    doc.setFont('helvetica', 'bold');
+    doc.text('Guardian Phone:', 14, 45);
+    doc.setFont('helvetica', 'normal');
+    doc.text(phone, 50, 45);
+
+    doc.setFont('helvetica', 'bold');
+    doc.text('Generated At:', 14, 52);
+    doc.setFont('helvetica', 'normal');
+    doc.text(`${formattedDate} at ${formattedTime}`, 50, 52);
+
+    doc.setFont('helvetica', 'bold');
+    doc.text('Total Saved Records:', 14, 59);
+    doc.setFont('helvetica', 'normal');
+    doc.text(`${recentRecords.length}`, 55, 59);
+
+    // Records Table
+    const tableData = recentRecords.map((r, index) => [
+      `#${index + 1}`,
+      r.timestamp,
+      r.patientType,
+      r.severity,
+      `${r.urgencyScore}/100`,
+      r.reportedSymptoms || 'N/A',
+      r.summaryAction || 'N/A',
+    ]);
+
+    autoTable(doc, {
+      startY: 65,
+      head: [['#', 'Time', 'Type', 'Priority', 'Score', 'Symptoms / Vitals', 'Action Protocol']],
+      body: tableData,
+      headStyles: {
+        fillColor: [15, 23, 42],
+        textColor: [255, 255, 255],
+        fontStyle: 'bold',
+      },
+      styles: {
+        fontSize: 8,
+        cellPadding: 2.5,
+      },
+      alternateRowStyles: {
+        fillColor: [248, 250, 252],
+      },
+    });
+
+    const sanitizedName = name.replace(/[^a-zA-Z0-9]/g, '_');
+    doc.save(`Triage_Report_${sanitizedName}_${Date.now()}.pdf`);
+
+    setPatientName('');
+    setGuardianPhone('');
+    setIsExportOpen(false);
   };
 
   const getBadgeColor = (cat: TriageCategory) => {
@@ -499,9 +586,18 @@ export default function App() {
                 <span className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2">
                   <Database className="w-4 h-4 text-emerald-400" /> Saved Local Log
                 </span>
-                <span className="text-xs font-bold text-slate-500">
-                  {recentRecords.length} Saved
-                </span>
+                <div className="flex items-center gap-3">
+                  <span className="text-xs font-bold text-slate-500">
+                    {recentRecords.length} Saved
+                  </span>
+                  <button
+                    onClick={() => setIsExportOpen(true)}
+                    disabled={recentRecords.length === 0}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-bold rounded-xl border border-indigo-400/40 transition cursor-pointer shadow-sm"
+                  >
+                    <FileDown className="w-3.5 h-3.5" /> Export PDF
+                  </button>
+                </div>
               </div>
 
               <div className="space-y-3">
@@ -548,6 +644,85 @@ export default function App() {
           </div>
         </div>
       </div>
+
+      {/* Export Patient Info Modal */}
+      {isExportOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4">
+          <div className="bg-slate-900 border-2 border-slate-800 rounded-3xl p-6 md:p-8 max-w-md w-full shadow-2xl space-y-5 animate-in fade-in duration-200">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <FileDown className="text-indigo-400 w-6 h-6" />
+                <h3 className="text-xl font-bold text-white">Generate Field PDF</h3>
+              </div>
+              <button
+                onClick={() => setIsExportOpen(false)}
+                className="text-slate-400 hover:text-white p-1 rounded-lg transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <p className="text-xs md:text-sm text-slate-400 leading-relaxed">
+              Enter patient details to tag this official report. In high-tempo emergencies, you can skip straight to download.
+            </p>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1.5">
+                  Patient Name
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g., Jane Doe (Optional)"
+                  value={patientName}
+                  onChange={(e) => setPatientName(e.target.value)}
+                  className="w-full bg-slate-950 border-2 border-slate-800 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-indigo-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1.5">
+                  Guardian / Contact Phone
+                </label>
+                <input
+                  type="tel"
+                  placeholder="e.g., +91 98765 43210 (Optional)"
+                  value={guardianPhone}
+                  onChange={(e) => setGuardianPhone(e.target.value)}
+                  className="w-full bg-slate-950 border-2 border-slate-800 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-indigo-500"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between pt-4 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={() => handleExportPDF(true)}
+                className="text-xs md:text-sm font-bold text-amber-400 hover:text-amber-300 underline underline-offset-4 cursor-pointer"
+              >
+                Skip for now (Emergency)
+              </button>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsExportOpen(false)}
+                  className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs md:text-sm font-bold rounded-xl transition cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleExportPDF(false)}
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs md:text-sm font-bold rounded-xl transition cursor-pointer shadow-lg shadow-emerald-950/50"
+                >
+                  Download PDF
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <GuidedTour
         currentStepIndex={tourIndex}
