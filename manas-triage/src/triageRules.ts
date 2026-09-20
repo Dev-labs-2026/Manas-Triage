@@ -5,63 +5,87 @@ export function evaluatePhysicalTriage(vitals: VitalsInput): {
   reason: string; 
   urgencyScore: number 
 } {
-  // Apnea check
+  // Apnea check: immediate fatal arrest
   if (!vitals.isBreathing) {
     return { 
-      category: 'BLACK', 
-      reason: 'Apneic. Reposition airway. If still unresponsive, prioritize viable casualties.',
+      category: 'RED', 
+      reason: 'Apneic: Immediate airway clearance and rescue ventilation required.',
       urgencyScore: 100 
     };
   }
 
-  let score = 5; // Baseline ambulatory score
   const reasons: string[] = [];
 
-  // 1. Hemorrhage Assessment (+45)
+  // 1. Dynamic Respiratory Score (Curve based on deviation from optimal 16 bpm)
+  // Normal resting rate: 12 - 20 bpm
+  const targetRate = 16;
+  const rr = Math.max(0, Math.min(80, vitals.respiratoryRate));
+  let respScore: number;
+
+  if (rr > 20) {
+    // Scales dynamically: 21 bpm adds ~5 points, 30 bpm adds ~30 points, 50 bpm adds ~48 points
+    respScore = Math.min(50, Math.round(Math.pow(rr - targetRate, 1.35) * 1.5));
+    if (rr >= 30) {
+      reasons.push(`Severe tachypnea (${rr} bpm)`);
+    } else if (rr >= 24) {
+      reasons.push(`Compensatory elevated respiration (${rr} bpm)`);
+    }
+  } else if (rr < 12) {
+    // Depression / Bradypnea: 11 bpm adds ~10 points, 6 bpm adds ~40 points
+    respScore = Math.min(50, Math.round(Math.pow(targetRate - rr, 1.4) * 2.2));
+    if (rr < 10) {
+      reasons.push(`Severe bradypnea (${rr} bpm)`);
+    }
+  } else {
+    // Normal baseline variation between 12 and 20 bpm (gives 2 to 6 points)
+    respScore = Math.abs(rr - targetRate) + 2;
+  }
+
+  // 2. Hemorrhage Dynamic Impact
+  // Active bleeding adds severe base urgency + scales slightly with respiratory stress
+  let bleedScore = 0;
   if (vitals.severeBleeding) {
-    score += 45;
-    reasons.push('Active arterial/uncontrolled hemorrhage');
+    bleedScore = 42 + Math.min(10, Math.round(respScore * 0.2));
+    reasons.push('Active uncontrolled arterial hemorrhage');
   }
 
-  // 2. Respiration Severity Gradient
-  if (vitals.respiratoryRate > 35 || vitals.respiratoryRate < 8) {
-    score += 35;
-    reasons.push(`Critical respiratory failure (${vitals.respiratoryRate} bpm)`);
-  } else if (vitals.respiratoryRate > 30 || vitals.respiratoryRate < 10) {
-    score += 25;
-    reasons.push(`Elevated respiration (${vitals.respiratoryRate} bpm)`);
-  } else if (vitals.respiratoryRate > 24) {
-    score += 10;
-    reasons.push(`Compensatory elevated respiration (${vitals.respiratoryRate} bpm)`);
-  }
-
-  // 3. Circulatory Perfusion (+30)
+  // 3. Circulatory Perfusion Shock
+  let pulseScore = 0;
   if (!vitals.radialPulsePresent) {
-    score += 30;
-    reasons.push('Absent radial pulse indicating shock/circulatory collapse');
+    pulseScore = 28 + Math.min(8, Math.round(respScore * 0.15));
+    reasons.push('Absent radial pulse (circulatory shock)');
   }
 
-  // 4. Neurological Deficit (+15)
-  if (!vitals.mentalStatusFollowsCommands) {
-    score += 15;
-    reasons.push('Altered consciousness/neurological deficit');
+  // Base human baseline score is 4
+  const rawScore = 4 + respScore + bleedScore + pulseScore;
+
+  // Strict life-threat check: Any true red flag guarantees a minimum score of 72
+  const isLifeThreat = 
+    vitals.severeBleeding || 
+    rr >= 30 || 
+    rr < 10 || 
+    !vitals.radialPulsePresent;
+
+  let calculatedScore = rawScore;
+  if (isLifeThreat && calculatedScore < 72) {
+    calculatedScore = 72 + Math.round((calculatedScore % 10) * 1.8);
   }
 
-  const finalScore = Math.min(score, 100);
+  const finalScore = Math.max(1, Math.min(99, calculatedScore));
 
-  // Category strictly mapped to the 0-100 score brackets
+  // Triage category mapping based on clinical status
   let category: TriageCategory;
-if (finalScore >= 70) {
-  category = 'RED';
-} else if (finalScore >= 35) {
-  category = 'YELLOW';
-} else {
-  category = 'GREEN';
-}
+  if (isLifeThreat || finalScore >= 70) {
+    category = 'RED';
+  } else if (finalScore >= 35 || (rr >= 24 && rr <= 29)) {
+    category = 'YELLOW';
+  } else {
+    category = 'GREEN';
+  }
 
   return {
     category,
-    reason: reasons.length > 0 ? reasons.join('; ') + '.' : 'Stable baseline parameters.',
+    reason: reasons.length > 0 ? reasons.join('; ') + '.' : 'Normal physiological parameters. Stable baseline.',
     urgencyScore: finalScore
   };
 }
@@ -69,8 +93,10 @@ if (finalScore >= 70) {
 export function detectMentalRedFlags(text: string): boolean {
   const normalized = text.toLowerCase();
   const criticalPhrases = [
-    'kill myself', 'suicide', 'end my life', 'want to die', 
-    'overdose', 'cut my wrists', 'no reason to live'
+    'kill myself', 'suicide', 'end my life', 'want to die', 'dying',
+    'overdose', 'cut my wrists', 'no reason to live', 'hang myself',
+    'hearing voices', 'people are watching me', 'hurt someone', 'end it all',
+    'cant go on', "can't go on", 'better off dead', 'take my life'
   ];
   return criticalPhrases.some(phrase => normalized.includes(phrase));
 }
